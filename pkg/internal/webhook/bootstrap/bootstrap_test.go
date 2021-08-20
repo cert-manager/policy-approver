@@ -78,7 +78,7 @@ func Test_waitForWebhookCertificateKey(t *testing.T) {
 
 			b := &bootstrapper{
 				certDir:                     dir,
-				webhookFileCheckRetryPeriod: time.Millisecond * 9,
+				webhookFileCheckRetryPeriod: time.Millisecond * 10,
 				log:                         klogr.New(),
 			}
 
