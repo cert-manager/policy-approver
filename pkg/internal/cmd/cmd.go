@@ -20,13 +20,16 @@ import (
 	"context"
 	"fmt"
 
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cmpapi "github.com/cert-manager/policy-approver/pkg/apis/policy/v1alpha1"
+	"github.com/cert-manager/policy-approver/pkg/approver/attribute"
 	"github.com/cert-manager/policy-approver/pkg/internal/cmd/options"
 	"github.com/cert-manager/policy-approver/pkg/internal/controllers"
 	"github.com/cert-manager/policy-approver/pkg/internal/webhook"
+	"github.com/cert-manager/policy-approver/pkg/internal/webhook/bootstrap"
 	"github.com/cert-manager/policy-approver/pkg/registry"
 )
 
@@ -46,9 +49,22 @@ func NewCommand(ctx context.Context) *cobra.Command {
 			return opts.Complete()
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			logf.Log = opts.Logr.WithName("apiutil")
 			log := opts.Logr.WithName("main")
 
-			mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+			log.Info("running policy-approver webhook bootstrap process...")
+			err := bootstrap.Run(ctx, bootstrap.Options{
+				Log:                    opts.Logr,
+				RestConfig:             opts.RestConfig,
+				Evaluator:              attribute.Attribute{},
+				WebhookCertificatesDir: opts.Webhook.CertDir,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to run bootstrap process")
+			}
+			log.Info("policy-approver webhook bootstrap process complete")
+
+			mgr, err := ctrl.NewManager(opts.RestConfig, ctrl.Options{
 				Scheme:                        cmpapi.GlobalScheme,
 				LeaderElectionNamespace:       "cert-manager",
 				LeaderElection:                true,
