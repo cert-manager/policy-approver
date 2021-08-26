@@ -23,23 +23,23 @@ import (
 	"github.com/cert-manager/policy-approver/pkg/approver"
 )
 
-var _ approver.Webhook = &FakeWebhook{}
+var _ approver.Reconciler = &FakeReconciler{}
 
-// FakeWebhook is a testing webook designed to mock webhooks with a
+// FakeReconciler is a testing reconciler designed to mock Reconcilers with a
 // pre-determined response.
-type FakeWebhook struct {
-	validateFunc func(context.Context, *policyapi.CertificateRequestPolicy) (approver.WebhookValidationResponse, error)
+type FakeReconciler struct {
+	readyFunc func(context.Context, *policyapi.CertificateRequestPolicy) (approver.ReconcilerReadyResponse, error)
 }
 
-func NewFakeWebhook() *FakeWebhook {
-	return new(FakeWebhook)
+func NewFakeReconciler() *FakeReconciler {
+	return new(FakeReconciler)
 }
 
-func (f *FakeWebhook) WithValidate(fn func(context.Context, *policyapi.CertificateRequestPolicy) (approver.WebhookValidationResponse, error)) *FakeWebhook {
-	f.validateFunc = fn
+func (f *FakeReconciler) WithReady(fn func(context.Context, *policyapi.CertificateRequestPolicy) (approver.ReconcilerReadyResponse, error)) *FakeReconciler {
+	f.readyFunc = fn
 	return f
 }
 
-func (f *FakeWebhook) Validate(ctx context.Context, policy *policyapi.CertificateRequestPolicy) (approver.WebhookValidationResponse, error) {
-	return f.validateFunc(ctx, policy)
+func (f *FakeReconciler) Ready(ctx context.Context, policy *policyapi.CertificateRequestPolicy) (approver.ReconcilerReadyResponse, error) {
+	return f.readyFunc(ctx, policy)
 }

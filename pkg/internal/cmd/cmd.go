@@ -22,19 +22,19 @@ import (
 
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	policyapi "github.com/cert-manager/policy-approver/pkg/apis/policy/v1alpha1"
 	"github.com/cert-manager/policy-approver/pkg/internal/cmd/options"
-	"github.com/cert-manager/policy-approver/pkg/internal/controller"
+	"github.com/cert-manager/policy-approver/pkg/internal/controllers"
 	"github.com/cert-manager/policy-approver/pkg/internal/webhook"
 	"github.com/cert-manager/policy-approver/pkg/registry"
 )
 
 const (
-	helpOutput = "A cert-manager policy approver which bases decisions on CertificateRequestPolicies"
+	helpOutput = "A cert-manager CertificateRequest approver that bases decisions on CertificateRequestPolicies"
 )
 
+// NewCommand returns an new command instance of policy-approver.
 func NewCommand(ctx context.Context) *cobra.Command {
 	opts := new(options.Options)
 
@@ -46,26 +46,42 @@ func NewCommand(ctx context.Context) *cobra.Command {
 			return opts.Complete()
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log := opts.Logr.WithName("main")
+
 			mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 				Scheme:                        policyapi.GlobalScheme,
 				LeaderElectionNamespace:       opts.LeaderElectionNamespace,
 				LeaderElection:                true,
 				LeaderElectionID:              "policy.cert-manager.io",
 				LeaderElectionReleaseOnCancel: true,
+				LeaderElectionResourceLock:    "leases",
 				ReadinessEndpointName:         "/readyz",
 				HealthProbeBindAddress:        opts.ReadyzAddress,
 				MetricsBindAddress:            opts.MetricsAddress,
+				Port:                          opts.Webhook.Port,
+				Host:                          opts.Webhook.Host,
+				CertDir:                       opts.Webhook.CertDir,
 				Logger:                        opts.Logr.WithName("controller"),
 			})
 			if err != nil {
-				return fmt.Errorf("unable to start controller manager: %w", err)
+				return fmt.Errorf("unable to create controller manager: %w", err)
 			}
 
-			if err := controller.AddPolicyController(ctx, mgr, controller.Options{
-				Log:        opts.Logr,
+			log.Info("preparing approvers...")
+			for _, approver := range registry.Shared.Approvers() {
+				log.Info("preparing approver...", "approver", approver.Name())
+				if err := approver.Prepare(ctx, mgr); err != nil {
+					return fmt.Errorf("failed to prepare approver %q: %w", approver.Name(), err)
+				}
+			}
+			log.Info("all approvers ready...")
+
+			if err := controllers.AddControllers(ctx, controllers.Options{
+				Log:        opts.Logr.WithName("controller"),
+				Manager:    mgr,
 				Evaluators: registry.Shared.Evaluators(),
 			}); err != nil {
-				return fmt.Errorf("failed to add policy controller: %w", err)
+				return fmt.Errorf("failed to add controllers: %w", err)
 			}
 
 			webhook.Register(mgr, webhook.Options{
@@ -73,16 +89,12 @@ func NewCommand(ctx context.Context) *cobra.Command {
 				Webhooks: registry.Shared.Webhooks(),
 			})
 
-			if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-				return fmt.Errorf("unable to set up ready check: %w", err)
-			}
-
-			opts.Logr.WithName("main").Info("starting policy controller")
+			log.Info("starting policy-approver...")
 			return mgr.Start(ctx)
 		},
 	}
 
-	opts.Prepare(cmd)
+	opts.Prepare(cmd, registry.Shared.Approvers()...)
 
 	return cmd
 }

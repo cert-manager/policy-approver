@@ -32,6 +32,8 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/klogr"
+
+	"github.com/cert-manager/policy-approver/pkg/approver"
 )
 
 // Options are the main options for the policy-approver. Populated via
@@ -53,28 +55,31 @@ type Options struct {
 	// which will be served on the HTTP path '/readyz'.
 	ReadyzAddress string
 
-	// ApproveWhenNoPolicies configures policy-approver to approve all
-	// CertificateRequests if no CertificateRequestPolicies resources exist.
-	ApproveWhenNoPolicies bool
-
-	// LeaderElectionNamespace is the namespace in which leader election should
-	// be leased in to form leader election.
-	LeaderElectionNamespace string
-
 	// RestConfig is the shared based rest config to connect to the Kubernetes
 	// API.
 	RestConfig *rest.Config
 
+	// Webhook are options specific to the Kubernetes Webhook.
+	Webhook
+
 	// Logr is the shared base logger.
 	Logr logr.Logger
+}
+
+// Webhook holds options specific to running the policy-approver Webhook
+// service.
+type Webhook struct {
+	Host    string
+	Port    int
+	CertDir string
 }
 
 func New() *Options {
 	return new(Options)
 }
 
-func (o *Options) Prepare(cmd *cobra.Command) *Options {
-	o.addFlags(cmd)
+func (o *Options) Prepare(cmd *cobra.Command, approvers ...approver.Interface) *Options {
+	o.addFlags(cmd, approvers...)
 	return o
 }
 
@@ -93,12 +98,17 @@ func (o *Options) Complete() error {
 	return nil
 }
 
-func (o *Options) addFlags(cmd *cobra.Command) {
+func (o *Options) addFlags(cmd *cobra.Command, approvers ...approver.Interface) {
 	var nfs cliflag.NamedFlagSets
 
 	o.addAppFlags(nfs.FlagSet("App"))
+	o.addWebhookFlags(nfs.FlagSet("Webhook"))
 	o.kubeConfigFlags = genericclioptions.NewConfigFlags(true)
 	o.kubeConfigFlags.AddFlags(nfs.FlagSet("Kubernetes"))
+
+	for _, approver := range approvers {
+		approver.RegisterFlags(nfs.FlagSet(approver.Name()))
+	}
 
 	usageFmt := "Usage:\n  %s\n"
 	cmd.SetUsageFunc(func(cmd *cobra.Command) error {
@@ -128,12 +138,20 @@ func (o *Options) addAppFlags(fs *pflag.FlagSet) {
 
 	fs.StringVar(&o.ReadyzAddress, "readiness-probe-bind-address", ":6060",
 		"TCP address for exposing the HTTP readiness probe which will be served on the HTTP path '/readyz'.")
+}
 
-	fs.BoolVar(&o.ApproveWhenNoPolicies, "approve-when-no-policies", false,
-		"TCP address for exposing the HTTP readiness probe which will be served on the HTTP path '/readyz'.")
+func (o *Options) addWebhookFlags(fs *pflag.FlagSet) {
+	fs.StringVar(&o.Webhook.Host,
+		"webhook-host", "0.0.0.0",
+		"Host to serve webhook.")
 
-	fs.StringVar(&o.LeaderElectionNamespace, "leader-election-namespace", "cert-manager",
-		"leader election namespace to use for the controller manager")
+	fs.IntVar(&o.Webhook.Port,
+		"webhook-port", 6443,
+		"Port to serve webhook.")
 
-	return
+	fs.StringVar(&o.Webhook.CertDir,
+		"webhook-certificate-dir", "/tls",
+		"Directory where the Webhook certificate and private key are located. "+
+			"Certificate and private key must be named 'tls.crt' and 'tls.key' "+
+			"respectively.")
 }
